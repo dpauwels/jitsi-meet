@@ -2117,5 +2117,16 @@ export default {
             room.setDisplayName(formattedNickname);
             APP.UI.changeDisplayName(this.getMyUserId(), formattedNickname);
         }
+    },
+
+    /**
+     * Returns the desktop sharing source id or null if the desktop sharing is
+     * not active at the moment.
+     *
+     * @returns {string|undefined} - The source id. If the track is not desktop
+     * track or the source id is not available, undefined will be returned.
+     */
+    getDesktopSharingSourceId() {
+        return localVideo.sourceId;
     }
 };

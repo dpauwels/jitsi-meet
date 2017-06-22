@@ -171,22 +171,7 @@ export default class Receiver extends RemoteControlParticipant {
             if (this._controller === null
                     && event.type === EVENT_TYPES.permissions
                     && event.action === PERMISSIONS_ACTIONS.request) {
-                const userId = participant.getId();
-
-                if (!config.remoteControlExternalAuth) {
-                    APP.store.dispatch(
-                        openRemoteControlAuthorizationDialog(userId));
-
-                    return;
-                }
-
-                // FIXME: Maybe use transport.sendRequest in this case???
-                remoteControlEvent.userId = userId;
-                remoteControlEvent.userJID = participant.getJid();
-                remoteControlEvent.displayName = participant.getDisplayName()
-                    || interfaceConfig.DEFAULT_REMOTE_DISPLAY_NAME;
-                remoteControlEvent.screenSharing
-                    = APP.conference.isSharingScreen;
+                this._onPermissionRequest(participant, remoteControlEvent);
             } else if (this._controller !== participant.getId()) {
                 return;
             } else if (event.type === EVENT_TYPES.stop) {
@@ -202,31 +187,44 @@ export default class Receiver extends RemoteControlParticipant {
     }
 
     /**
-     * Handles remote control permission events.
+     * Handles permission requests.
      *
-     * @param {string} userId - The user id of the participant related to the
-     * event.
-     * @param {PERMISSIONS_ACTIONS} action - The action related to the event.
+     * @param {JitsiParticipant} participant - The participant that requested
+     * permissions.
+     * @param {Object} request - The permission request.
      * @returns {void}
      */
-    _onRemoteControlPermissionsEvent(userId: string, action: string) {
-        switch (action) {
-        case PERMISSIONS_ACTIONS.grant:
-            this.grant(userId);
-            break;
-        case PERMISSIONS_ACTIONS.deny:
-            this.deny(userId);
-            break;
-        case PERMISSIONS_ACTIONS.error:
+    _onPermissionRequest(participant, request) {
+        const userId = participant.getId();
+
+        if (!config.remoteControlExternalAuth) {
+            APP.store.dispatch(
+                openRemoteControlAuthorizationDialog(userId));
+
+            return;
+        }
+
+        transport.sendRequest({
+            ...request,
+            userId,
+            userJID: participant.getJid(),
+            displayName: participant.getDisplayName()
+                || interfaceConfig.DEFAULT_REMOTE_DISPLAY_NAME,
+            screenSharing: APP.conference.isSharingScreen
+        })
+        .then(({ granted }) => {
+            if (granted) {
+                this.grant(userId);
+            } else {
+                this.deny(userId);
+            }
+        })
+        .catch(() => {
             this.sendRemoteControlEvent(userId, {
                 type: EVENT_TYPES.permissions,
-                action
+                action: PERMISSIONS_ACTIONS.error
             });
-            break;
-        default:
-
-                // Unknown action. Ignore.
-        }
+        });
     }
 
     /**
@@ -260,6 +258,7 @@ export default class Receiver extends RemoteControlParticipant {
                 type: EVENT_TYPES.permissions,
                 action: PERMISSIONS_ACTIONS.grant
             });
+            this._sendStartAPIEvent();
         } else {
             APP.conference.toggleScreenSharing();
             APP.conference.screenSharingPromise.then(() => {
@@ -268,6 +267,7 @@ export default class Receiver extends RemoteControlParticipant {
                         type: EVENT_TYPES.permissions,
                         action: PERMISSIONS_ACTIONS.grant
                     });
+                    this._sendStartAPIEvent();
                 } else {
                     this.sendRemoteControlEvent(userId, {
                         type: EVENT_TYPES.permissions,
@@ -284,19 +284,33 @@ export default class Receiver extends RemoteControlParticipant {
     }
 
     /**
+     * Sends remote control event of type start.
+     *
+     * @returns {void}
+     */
+    _sendStartAPIEvent() {
+        transport.sendEvent({
+            name: REMOTE_CONTROL_EVENT_NAME,
+            type: EVENT_TYPES.start,
+            id: APP.conference.getSourceId()
+        });
+    }
+
+    /**
      * Handles remote control events from the external app. Currently only
-     * events with type = EVENT_TYPES.supported or EVENT_TYPES.permissions.
+     * events with type EVENT_TYPES.supported and EVENT_TYPES.stop are
+     * supported.
      *
      * @param {RemoteControlEvent} event - The remote control event.
      * @returns {void}
      */
     _onRemoteControlAPIEvent(event: Object) {
         switch (event.type) {
-        case EVENT_TYPES.permissions:
-            this._onRemoteControlPermissionsEvent(event.userId, event.action);
-            break;
         case EVENT_TYPES.supported:
             this._onRemoteControlSupported();
+            break;
+        case EVENT_TYPES.stop:
+            this.stop();
             break;
         }
     }
